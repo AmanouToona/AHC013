@@ -1,6 +1,5 @@
 #[cfg(feature = "local")]
 use log::{debug, error, info, warn, LevelFilter};
-use std;
 
 #[macro_export]
 macro_rules! input_value {
@@ -63,13 +62,21 @@ impl Unionfind {
             std::mem::swap(&mut x_root, &mut y_root)
         }
         self.parents[x_root] += self.parents[y_root];
-        self.parents[y_root] = x_root;
+        self.parents[y_root] = x_root as i64;
     }
 }
 
-struct Input {}
+struct Result {
+    moves: Vec<(usize, usize, usize, usize)>,
+    connects: Vec<(usize, usize, usize, usize)>,
+}
 
-fn compute_score() {}
+fn compute_score(n: i64, k: i64, c: Vec<Vec<i64>>, res: Result) {
+    let mut c = c.to_vec();
+    for v in res.moves.iter() {
+        let (i, j, i2, j2) = v;
+    }
+}
 
 fn main() {
     // 入力
