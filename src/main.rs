@@ -205,8 +205,13 @@ impl Status {
         let mut j = pos[1] + direction[1];
 
         while i < self.n && j < self.n {
+            if self.c[i][j] == 0 {
+                self.c[i][j] = 9;
+                continue;
+            }
             if self.c[i][j] == self.c[pos[0]][pos[1]] {
                 self.connects.push([pos[0], pos[1], i, j]);
+                return;
             }
             i += direction[0];
             j += direction[1];
