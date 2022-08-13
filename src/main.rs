@@ -1,3 +1,4 @@
+use std::convert::{TryFrom, TryInto};
 use std::{collections::HashSet, usize};
 
 #[allow(unused_imports)]
@@ -48,6 +49,18 @@ pub fn get_time() -> f64 {
             STIME = ms;
         }
         ms - STIME
+    }
+}
+
+fn manhattan_distance(x: [usize; 2], y: [usize; 2]) -> usize {
+    abs_diff(x[0], y[0]) + abs_diff(x[1], y[1])
+}
+
+fn abs_diff(x: usize, y: usize) -> usize {
+    if x >= y {
+        return x - y;
+    } else {
+        return y - x;
     }
 }
 
@@ -121,22 +134,22 @@ impl Answer {
     }
 }
 
-struct Borad {
+struct Board {
     c: Vec<Vec<usize>>,
     k: usize,
     n: usize,
 }
 
-impl Borad {
+impl Board {
     pub fn new(c: &Vec<Vec<usize>>, k: usize) -> Self {
-        Borad {
+        Board {
             c: c.clone(),
             k,
             n: c.len(),
         }
     }
 
-    pub fn show_borad(&self) {
+    pub fn show_board(&self) {
         for c in self.c.iter() {
             let output = c
                 .iter()
@@ -148,7 +161,7 @@ impl Borad {
         }
     }
 
-    fn count(&self, center: [usize; 2], distance: usize, target: usize) -> usize {
+    fn count_number_in_area(&self, center: [usize; 2], distance: usize, target: usize) -> usize {
         // center から distandce 内にある target の個数を返す。 マンハッタン距離で計算
         let start_h = center[0].checked_sub(distance).unwrap_or(0);
         let start_w = center[1].checked_sub(distance).unwrap_or(0);
@@ -160,7 +173,7 @@ impl Borad {
 
         for h in start_h..end_h {
             for w in start_w..end_w {
-                if h.abs_diff(center[0]) + w.abs_diff(center[1]) > distance {
+                if abs_diff(h, center[0]) + abs_diff(w, center[1]) > distance {
                     continue;
                 }
                 if self.c[h][w] == target {
@@ -169,6 +182,23 @@ impl Borad {
             }
         }
         cnt
+    }
+
+    pub fn score_count_num_in_area(&self, computers_type: [usize; 5]) -> usize {
+        let point = [
+            [0, 0],
+            [0, self.n - 1],
+            [self.n - 1, 0],
+            [self.n - 1, self.n - 1],
+            [self.n / 2, self.n / 2],
+        ];
+
+        let mut score = 0;
+        for (computer_type, center) in computers_type.iter().zip(point.iter()) {
+            score += self.count_number_in_area(center.clone(), self.n / 2, computer_type.clone());
+        }
+
+        score
     }
 
     pub fn make_init_point(&self) -> [usize; 5] {
@@ -181,7 +211,7 @@ impl Borad {
                 }
 
                 if is_in.iter().all(|&x| x == true) {
-                    conditions.push(arr.as_slice().try_into().unwrap());
+                    conditions.push([arr[0], arr[1], arr[2], arr[3], arr[4]]);
                 }
                 return;
             }
@@ -208,11 +238,8 @@ impl Borad {
             [self.n / 2, self.n / 2],
         ];
 
-        for v in conditions.iter() {
-            let mut score = 0;
-            for (computer_type, center) in v.iter().zip(point.iter()) {
-                score += self.count(center.clone(), self.n / 2, computer_type.clone());
-            }
+        for &v in conditions.iter() {
+            let score = self.score_count_num_in_area(v);
 
             if score > max_score {
                 max_score = score;
@@ -276,8 +303,9 @@ impl Status {
         }
     }
 
-    pub fn solve(&mut self) {
-        self._move();
+    pub fn solve(&mut self, v: [usize; 5]) {
+        // self._move();
+        self._move_close_to_points(v);
         self.connect();
     }
     fn _move(&mut self) {
@@ -311,6 +339,84 @@ impl Status {
             self.moves.push([i, j, i2, j2]);
         }
     }
+
+    fn _move_close_to_points(&mut self, v: [usize; 5]) {
+        let move_direction: [[i64; 2]; 4] = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+        let move_limit = self.k * 100 / 2;
+        let mut rng = rand::thread_rng();
+        let time_limit: f64 = 2500.0;
+
+        let points = [
+            [0, 0],
+            [0, self.n - 1],
+            [self.n - 1, 0],
+            [self.n - 1, self.n - 1],
+            [self.n / 2, self.n / 2],
+        ];
+
+        let mut move_cnt = 0;
+
+        loop {
+            if get_time() / time_limit > 1.0 {
+                break;
+            }
+
+            let uh = rng.gen_range(0, self.n);
+            let uw = rng.gen_range(0, self.n);
+
+            if self.c[uh][uw] == 0 {
+                continue;
+            }
+
+            let direction = move_direction.choose(&mut rng).unwrap();
+
+            let vh = match usize::try_from(uh as i64 + direction[0]) {
+                Ok(v) => v,
+                _ => continue,
+            };
+            let vw = match usize::try_from(uw as i64 + direction[1]) {
+                Ok(v) => v,
+                _ => continue,
+            };
+
+            if vh >= self.n || vw >= self.n {
+                continue;
+            }
+
+            if self.c[vh][vw] != 0 {
+                continue;
+            }
+
+            let mut u_score: usize = 10000000;
+            let mut v_score: usize = 10000000;
+
+            for (i, &point) in points.iter().enumerate() {
+                if v[i] != self.c[uh][uw] {
+                    continue;
+                }
+
+                u_score = std::cmp::min(u_score, manhattan_distance([uh, uw], point));
+                v_score = std::cmp::min(v_score, manhattan_distance([vh, vw], point));
+            }
+
+            if u_score > v_score {
+                continue;
+            }
+
+            // move
+            self.c[vh][vw] = self.c[uh][uw];
+            self.c[uh][uw] = 0;
+
+            self.moves.push([uh, uw, vh, vw]);
+
+            move_cnt += 1;
+
+            if move_cnt > move_limit {
+                break;
+            }
+        }
+    }
+
     fn connect(&mut self) {
         let used_cmputer: usize = 9;
         let connect_limit: usize = self.k * 100 - self.moves.len();
@@ -462,8 +568,11 @@ fn main() {
         c.push(v);
     }
 
-    let mut status = Status::new(&c, n, k * 100);
-    status.solve();
+    let board = Board::new(&c, k);
+    let idial_points = board.make_init_point();
+
+    let mut status = Status::new(&c, n, k);
+    status.solve(idial_points);
 
     let ans = Answer::new(&status.moves, &status.connects);
     ans.print_answer();
