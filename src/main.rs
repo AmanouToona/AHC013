@@ -1,3 +1,5 @@
+use std::{collections::HashSet, usize};
+
 #[allow(unused_imports)]
 #[cfg(feature = "local")]
 use log::{debug, error, info, warn, LevelFilter};
@@ -33,6 +35,20 @@ impl Logger {
 #[cfg(not(feature = "local"))]
 impl Logger {
     // 何もしないメソッドの実装
+}
+
+pub fn get_time() -> f64 {
+    static mut STIME: f64 = -1.0;
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap();
+    let ms = t.as_secs() as f64 + t.subsec_nanos() as f64 * 1e-9;
+    unsafe {
+        if STIME < 0.0 {
+            STIME = ms;
+        }
+        ms - STIME
+    }
 }
 
 struct Unionfind {
@@ -105,22 +121,158 @@ impl Answer {
     }
 }
 
+struct Borad {
+    c: Vec<Vec<usize>>,
+    k: usize,
+    n: usize,
+}
+
+impl Borad {
+    pub fn new(c: &Vec<Vec<usize>>, k: usize) -> Self {
+        Borad {
+            c: c.clone(),
+            k,
+            n: c.len(),
+        }
+    }
+
+    pub fn show_borad(&self) {
+        for c in self.c.iter() {
+            let output = c
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<String>>()
+                .join(" ");
+
+            println!("{}", output);
+        }
+    }
+
+    fn count(&self, center: [usize; 2], distance: usize, target: usize) -> usize {
+        // center から distandce 内にある target の個数を返す。 マンハッタン距離で計算
+        let start_h = center[0].checked_sub(distance).unwrap_or(0);
+        let start_w = center[1].checked_sub(distance).unwrap_or(0);
+
+        let n = self.c.len();
+        let end_h = std::cmp::min(center[0] + distance + 1, n);
+        let end_w = std::cmp::min(center[1] + distance + 1, n);
+        let mut cnt: usize = 0;
+
+        for h in start_h..end_h {
+            for w in start_w..end_w {
+                if h.abs_diff(center[0]) + w.abs_diff(center[1]) > distance {
+                    continue;
+                }
+                if self.c[h][w] == target {
+                    cnt += 1
+                }
+            }
+        }
+        cnt
+    }
+
+    pub fn make_init_point(&self) -> [usize; 5] {
+        fn dfs(arr: Vec<usize>, k: usize, conditions: &mut Vec<[usize; 5]>) {
+            if arr.len() == 5 {
+                let mut is_in: Vec<bool> = vec![false; k];
+
+                for a in arr.iter() {
+                    is_in[a - 1] = true;
+                }
+
+                if is_in.iter().all(|&x| x == true) {
+                    conditions.push(arr.as_slice().try_into().unwrap());
+                }
+                return;
+            }
+
+            for computer_type in 1..=k {
+                let mut _arr = arr.clone();
+                _arr.push(computer_type);
+                dfs(_arr, k, conditions);
+            }
+        }
+
+        let mut conditions: Vec<[usize; 5]> = Vec::new();
+
+        let arr: Vec<usize> = Vec::new();
+        dfs(arr, self.k, &mut conditions);
+
+        let mut max_score = 0;
+        let mut ans_condition: [usize; 5] = [1; 5];
+        let point = [
+            [0, 0],
+            [0, self.n - 1],
+            [self.n - 1, 0],
+            [self.n - 1, self.n - 1],
+            [self.n / 2, self.n / 2],
+        ];
+
+        for v in conditions.iter() {
+            let mut score = 0;
+            for (computer_type, center) in v.iter().zip(point.iter()) {
+                score += self.count(center.clone(), self.n / 2, computer_type.clone());
+            }
+
+            if score > max_score {
+                max_score = score;
+                ans_condition = v.clone();
+            }
+        }
+
+        ans_condition
+    }
+
+    pub fn make_init_bord(&self) -> Vec<Vec<usize>> {
+        let ans_condition = self.make_init_point();
+
+        let n = self.c.len();
+
+        let mut res_board: Vec<Vec<usize>> = vec![vec![1; n]; n];
+
+        let point = [
+            [0, 0],
+            [0, n - 1],
+            [n - 1, 0],
+            [n - 1, n - 1],
+            [n / 2, n / 2],
+        ];
+
+        for (p, &computer_type) in point.iter().zip(ans_condition.iter()) {
+            let start_h = p[0].checked_sub(n / 2).unwrap_or(0);
+            let start_w = p[1].checked_sub(n / 2).unwrap_or(0);
+
+            let end_h = std::cmp::min(p[0] + n / 2, n);
+            let end_w = std::cmp::min(p[1] + n / 2, n);
+
+            for h in start_h..end_h {
+                for w in start_w..end_w {
+                    res_board[h][w] = computer_type;
+                }
+            }
+        }
+        res_board
+    }
+}
+
 struct Status {
     moves: Vec<[usize; 4]>,
     connects: Vec<[usize; 4]>,
     c: Vec<Vec<usize>>,
     n: usize,
-    lim: usize, // k
+    k: usize,
+    move_count: usize,
 }
 
 impl Status {
-    pub fn new(c: &Vec<Vec<usize>>, n: usize, lim: usize) -> Self {
+    pub fn new(c: &Vec<Vec<usize>>, n: usize, k: usize) -> Self {
         Status {
             moves: Vec::new(),
             connects: Vec::new(),
             c: c.clone(),
             n,
-            lim,
+            k,
+            move_count: 0,
         }
     }
 
@@ -130,7 +282,7 @@ impl Status {
     }
     fn _move(&mut self) {
         let move_direction: [[i64; 2]; 4] = [[0, 1], [0, -1], [1, 0], [-1, 0]];
-        let move_limit = self.lim / 2;
+        let move_limit = self.k * 100 / 2;
         let mut rng = rand::thread_rng();
 
         for _ in 0..move_limit {
@@ -161,7 +313,7 @@ impl Status {
     }
     fn connect(&mut self) {
         let used_cmputer: usize = 9;
-        let connect_limit: usize = self.lim / 2;
+        let connect_limit: usize = self.k * 100 - self.moves.len();
 
         for i in 0..self.n as usize {
             for j in 0..self.n as usize {
@@ -284,6 +436,8 @@ fn compute_score(n: i64, k: i64, c: Vec<Vec<i64>>, res: Answer) -> i64 {
 }
 
 fn main() {
+    get_time();
+
     // 入力
     let mut s: String = String::new();
     std::io::stdin().read_line(&mut s).ok();
