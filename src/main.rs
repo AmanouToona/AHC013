@@ -81,10 +81,15 @@ impl Unionfind {
     }
 
     fn find(&mut self, x: (usize, usize)) -> usize {
-        if self.parents[x.0 * self.size + x.1] < 0 {
-            return x.0 * self.size + x.1;
+        let x = x.0 * self.size + x.1;
+        self._find(x)
+    }
+
+    fn _find(&self, x: usize) -> usize {
+        if self.parents[x] < 0 {
+            return x;
         } else {
-            return self.find(x);
+            return self._find(self.parents[x] as usize);
         }
     }
 
