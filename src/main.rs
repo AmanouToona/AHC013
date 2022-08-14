@@ -352,7 +352,7 @@ impl Status {
         let move_direction: [[i64; 2]; 4] = [[0, 1], [0, -1], [1, 0], [-1, 0]];
         let move_limit = self.k * 100 / 2;
         let mut rng = rand::thread_rng();
-        let time_limit: f64 = 2500.0;
+        let time_limit: f64 = 2.5;
 
         let points = [
             [0, 0],
@@ -565,7 +565,7 @@ impl Anneal {
 
         let mut score = 0;
         for i in 0..computers.len() {
-            for j in i..computers.len() {
+            for j in i + 1..computers.len() {
                 if uf.find(computers[i]) != uf.find(computers[j]) {
                     continue;
                 }
@@ -709,7 +709,7 @@ impl Anneal {
         }
     }
 
-    fn connect_cables_randomly(&mut self, connection_num: usize) {
+    fn connect_cables_randomly(&mut self, connection_num: usize) -> Vec<[usize; 4]> {
         let mut rng = rand::thread_rng();
 
         let mut cables: Vec<[usize; 4]> = self.cables.clone();
@@ -717,6 +717,7 @@ impl Anneal {
         cables.shuffle(&mut rng);
 
         let mut connection_cnt: usize = 0;
+        let mut connected_cable: Vec<[usize; 4]> = Vec::new();
         for cable in cables {
             if self.connected_cables.contains(&cable) {
                 continue;
@@ -726,13 +727,17 @@ impl Anneal {
                 connection_cnt += 1;
             }
 
+            connected_cable.push(cable.clone());
+
             if connection_cnt >= connection_num {
                 break;
             }
         }
+
+        connected_cable
     }
 
-    fn cut_cables_random(&mut self, cut_num: usize) {
+    fn cut_cables_randomly(&mut self, cut_num: usize) -> Vec<[usize; 4]> {
         let mut rng = rand::thread_rng();
 
         // todo vec を hash から作って回したほうが早い と思う
@@ -742,6 +747,7 @@ impl Anneal {
         cables.shuffle(&mut rng);
 
         let mut cut_cnt: usize = 0;
+        let mut cut_cable: Vec<[usize; 4]> = Vec::new();
         for cable in cables {
             if !self.connected_cables.contains(&cable) {
                 continue;
@@ -750,8 +756,41 @@ impl Anneal {
             self.cut_cable(cable);
             cut_cnt += 1;
 
+            cut_cable.push(cable.clone());
+
             if cut_cnt >= cut_num {
                 break;
+            }
+        }
+        cut_cable
+    }
+
+    fn greedy_connection(&mut self) {
+        self.connect_cables_randomly(self.k * 100);
+        let time_limit: f64 = 2.5;
+
+        loop {
+            if get_time() / time_limit > 1.0 {
+                break;
+            }
+
+            let u_score = self.calc_score();
+
+            let cut = self.cut_cables_randomly(10);
+            let connect = self.connect_cables_randomly(self.k * 100 - self.connected_cables.len());
+
+            let v_score = self.calc_score();
+
+            if v_score >= u_score {
+                continue;
+            }
+
+            for cable in connect {
+                self.cut_cable(cable);
+            }
+
+            for cable in cut {
+                self.connect_cable(cable);
             }
         }
     }
@@ -850,8 +889,10 @@ fn main() {
         c.push(v);
     }
 
+    // pc 結合の焼きなまし
     let mut anneal = Anneal::new(&c, n, k);
-    anneal.connect_cables_randomly(k * 100);
+    anneal.greedy_connection();
+    anneal.connect_cables_randomly(k * 100 - anneal.connected_cables.len());
 
     let moves: Vec<[usize; 4]> = Vec::new();
     let mut connects: Vec<[usize; 4]> = Vec::new();
