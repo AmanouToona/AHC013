@@ -1,10 +1,13 @@
 use std::convert::{TryFrom, TryInto};
+use std::hash::Hash;
 use std::{collections::HashSet, usize};
 
+use itertools::Itertools;
 #[allow(unused_imports)]
 #[cfg(feature = "local")]
 use log::{debug, error, info, warn, LevelFilter};
 
+use petgraph::Direction;
 use rand::{prelude::SliceRandom, Rng};
 
 #[macro_export]
@@ -477,6 +480,280 @@ impl Status {
     }
 }
 
+// 焼きなまし用
+
+struct Anneal {
+    c: Vec<Vec<usize>>,
+    n: usize,
+    k: usize,
+    move_count: usize,
+    cables: Vec<[usize; 4]>,
+    connected_cables: HashSet<[usize; 4]>,
+    cable_laying_position: Vec<Vec<usize>>,
+}
+
+impl Anneal {
+    fn new(c: &Vec<Vec<usize>>, n: usize, k: usize) -> Self {
+        let cable_laying_position: Vec<Vec<usize>> = vec![vec![0; n]; n];
+
+        let mut anneal = Anneal {
+            c: c.clone(),
+            n: n,
+            k: k,
+            move_count: 0,
+            cables: Vec::new(),
+            connected_cables: HashSet::new(),
+            cable_laying_position,
+        };
+
+        anneal.get_all_cables();
+        anneal
+    }
+
+    fn get_all_cables(&mut self) {
+        let mut cables: Vec<[usize; 4]> = Vec::new();
+
+        for h in 0..self.n {
+            for w in 0..self.n {
+                if self.c[h][w] == 0 {
+                    continue;
+                }
+
+                for direction in [[0, 1], [1, 0]].iter() {
+                    let mut vh = h;
+                    let mut vw = w;
+
+                    let dh = direction[0];
+                    let dw = direction[1];
+                    while vh < self.n - 1 && vw < self.n - 1 {
+                        vh += dh;
+                        vw += dw;
+                        if self.c[h][w] == self.c[vh][vw] {
+                            cables.push([h, w, vh, vw]);
+                            break;
+                        }
+                        if self.c[vh][vw] != 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        self.cables = cables;
+    }
+
+    fn calc_score(&self) -> usize {
+        let mut uf = Unionfind::new(self.n);
+        for cable in self.connected_cables.iter() {
+            uf.unite((cable[0], cable[1]), (cable[2], cable[3]));
+        }
+
+        let mut computers: Vec<(usize, usize)> = Vec::new();
+        for h in 0..self.n {
+            for w in 0..self.n {
+                if self.c[h][w] == 0 {
+                    continue;
+                }
+                computers.push((h, w));
+            }
+        }
+
+        let mut score = 0;
+        for i in 0..computers.len() {
+            for j in i..computers.len() {
+                if uf.find(computers[i]) != uf.find(computers[j]) {
+                    continue;
+                }
+                if self.c[computers[i].0][computers[i].1] == self.c[computers[j].0][computers[j].1]
+                {
+                    score += 1;
+                } else {
+                    score -= 1;
+                }
+            }
+        }
+
+        return score;
+    }
+
+    fn is_cable_vertical(cable: [usize; 4]) -> bool {
+        cable[1] == cable[3]
+    }
+
+    fn is_cable_crosses(u: [usize; 4], v: [usize; 4]) -> bool {
+        // 両方縦方向の場合
+        if Self::is_cable_vertical(u) && Self::is_cable_vertical(v) {
+            // 存在する列が異なる
+            if u[1] != v[1] {
+                return false;
+            }
+            let upper = if u[0] < v[0] { u } else { v };
+            let lower = if u[0] < v[0] { v } else { u };
+
+            if upper[2] <= lower[0] {
+                return false;
+            } else {
+                return true;
+            }
+        }
+
+        // 両方横方向の場合
+        if !Self::is_cable_vertical(u) && !Self::is_cable_vertical(v) {
+            // 存在する列が異なる
+            if u[0] != v[0] {
+                return false;
+            }
+            let left = if u[1] < v[1] { u } else { v };
+            let right = if u[1] < v[1] { v } else { u };
+
+            if left[3] <= right[1] {
+                return false;
+            } else {
+                return true;
+            }
+        }
+
+        // 縦 横 の場合
+        let vertical = if Self::is_cable_vertical(u) { u } else { v };
+        let horizontal = if Self::is_cable_vertical(u) { v } else { u };
+
+        // 開始点の重複がある場合はケーブルは交差していない
+        let mut pc_point: HashSet<[usize; 2]> = HashSet::new();
+        pc_point.insert([u[0], u[1]]);
+        pc_point.insert([u[2], u[3]]);
+        pc_point.insert([v[0], v[1]]);
+        pc_point.insert([v[2], v[3]]);
+
+        if pc_point.len() < 4 {
+            return false;
+        }
+
+        if vertical[1] <= horizontal[3]
+            && vertical[1] >= horizontal[1]
+            && horizontal[0] <= vertical[3]
+            && horizontal[0] >= vertical[0]
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    fn connect_cable(&mut self, cable: [usize; 4]) {
+        if Self::is_cable_vertical(cable) {
+            let w = cable[1];
+            for h in std::cmp::min(cable[0], cable[2])..=std::cmp::max(cable[0], cable[2]) {
+                self.cable_laying_position[h][w] += 1;
+            }
+        } else {
+            let h = cable[0];
+            for w in std::cmp::min(cable[1], cable[3])..=std::cmp::max(cable[1], cable[3]) {
+                self.cable_laying_position[h][w] += 1;
+            }
+        }
+        self.connected_cables.insert(cable.clone());
+    }
+
+    fn cut_cable(&mut self, cable: [usize; 4]) {
+        if !self.connected_cables.contains(&cable) {
+            return;
+        }
+
+        if Self::is_cable_vertical(cable) {
+            let w = cable[1];
+            let mut h1 = cable[0];
+            let mut h2 = cable[2];
+            if h1 > h2 {
+                std::mem::swap(&mut h1, &mut h2);
+            }
+
+            for h in h1..h2 {
+                self.cable_laying_position[h][w] -= 1;
+            }
+        } else {
+            let h = cable[0];
+            let mut w1 = cable[1];
+            let mut w2 = cable[3];
+            if w1 > w2 {
+                std::mem::swap(&mut w1, &mut w2);
+            }
+            for w in w1..w2 {
+                self.cable_laying_position[h][w] -= 1;
+            }
+        }
+        self.connected_cables.remove(&cable);
+    }
+
+    fn can_connect_cable(&self, cable: [usize; 4]) -> bool {
+        if Self::is_cable_vertical(cable) {
+            let w = cable[1];
+            for h in std::cmp::min(cable[0], cable[2]) + 1..std::cmp::max(cable[0], cable[2]) {
+                if self.cable_laying_position[h][w] > 0 {
+                    return false;
+                }
+            }
+            return true;
+        } else {
+            let h = cable[0];
+            for w in std::cmp::min(cable[1], cable[3]) + 1..std::cmp::max(cable[1], cable[3]) {
+                if self.cable_laying_position[h][w] > 0 {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    fn connect_cables_randomly(&mut self, connection_num: usize) {
+        let mut rng = rand::thread_rng();
+
+        let mut cables: Vec<[usize; 4]> = self.cables.clone();
+
+        cables.shuffle(&mut rng);
+
+        let mut connection_cnt: usize = 0;
+        for cable in cables {
+            if self.connected_cables.contains(&cable) {
+                continue;
+            }
+            if self.can_connect_cable(cable) {
+                self.connect_cable(cable);
+                connection_cnt += 1;
+            }
+
+            if connection_cnt >= connection_num {
+                break;
+            }
+        }
+    }
+
+    fn cut_cables_random(&mut self, cut_num: usize) {
+        let mut rng = rand::thread_rng();
+
+        // todo vec を hash から作って回したほうが早い と思う
+
+        let mut cables: Vec<[usize; 4]> = self.cables.clone();
+
+        cables.shuffle(&mut rng);
+
+        let mut cut_cnt: usize = 0;
+        for cable in cables {
+            if !self.connected_cables.contains(&cable) {
+                continue;
+            }
+
+            self.cut_cable(cable);
+            cut_cnt += 1;
+
+            if cut_cnt >= cut_num {
+                break;
+            }
+        }
+    }
+
+    fn anneal_connection(&self) {}
+}
+
 fn compute_score(n: i64, k: i64, c: Vec<Vec<i64>>, res: Answer) -> i64 {
     let c = c.to_vec();
     for &v in res.moves.iter() {
@@ -568,12 +845,16 @@ fn main() {
         c.push(v);
     }
 
-    let board = Board::new(&c, k);
-    let idial_points = board.make_init_point();
+    let mut anneal = Anneal::new(&c, n, k);
+    anneal.connect_cables_randomly(k * 100);
 
-    let mut status = Status::new(&c, n, k);
-    status.solve(idial_points);
+    let moves: Vec<[usize; 4]> = Vec::new();
+    let mut connects: Vec<[usize; 4]> = Vec::new();
 
-    let ans = Answer::new(&status.moves, &status.connects);
+    for &cable in anneal.connected_cables.iter() {
+        connects.push(cable);
+    }
+
+    let ans = Answer::new(&moves, &connects);
     ans.print_answer();
 }
