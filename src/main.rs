@@ -352,7 +352,7 @@ impl Status {
         let move_direction: [[i64; 2]; 4] = [[0, 1], [0, -1], [1, 0], [-1, 0]];
         let move_limit = self.k * 100 / 2;
         let mut rng = rand::thread_rng();
-        let time_limit: f64 = 2.5;
+        let time_limit: f64 = 2.8;
 
         let points = [
             [0, 0],
@@ -672,7 +672,7 @@ impl Anneal {
                 std::mem::swap(&mut h1, &mut h2);
             }
 
-            for h in h1..h2 {
+            for h in h1..=h2 {
                 self.cable_laying_position[h][w] -= 1;
             }
         } else {
@@ -682,7 +682,7 @@ impl Anneal {
             if w1 > w2 {
                 std::mem::swap(&mut w1, &mut w2);
             }
-            for w in w1..w2 {
+            for w in w1..=w2 {
                 self.cable_laying_position[h][w] -= 1;
             }
         }
@@ -795,7 +795,57 @@ impl Anneal {
         }
     }
 
-    fn anneal_connection(&self) {}
+    fn anneal_connection(&mut self) {
+        self.connect_cables_randomly(self.k * 100);
+        let mut rng = rand_pcg::Pcg64Mcg::new(890482);
+        let TL: f64 = 2.5;
+        let T0: f64 = self.calc_score() as f64;
+        let T1: f64 = 2.0;
+        let mut T = T0;
+
+        let mut cut_connect_num = self.connected_cables.len() as f64;
+        cut_connect_num *= 0.1;
+        let cut_connect_num = cut_connect_num as usize;
+
+        let mut cnt = 0;
+        loop {
+            cnt += 1;
+            if cnt % 10 == 0 {
+                let mut t = get_time();
+                t /= TL;
+                if t >= 1.0 {
+                    self.connect_cables_randomly(self.k * 100 - self.connected_cables.len());
+                    break;
+                }
+                T = T0.powf(1.0 - t) * T1.powf(t);
+            }
+
+            let u_score = self.calc_score();
+
+            let cut = self.cut_cables_randomly(cut_connect_num);
+            let connect = self.connect_cables_randomly(cut_connect_num);
+
+            let v_score = self.calc_score();
+
+            // println!(
+            //     "loop: {} connection: {} u_score: {}  v_score: {} T: {}",
+            //     cnt,
+            //     self.connected_cables.len(),
+            //     u_score,
+            //     v_score,
+            //     T
+            // );
+
+            if u_score > v_score && !rng.gen_bool(f64::exp((v_score as f64 - u_score as f64) / T)) {
+                for cable in connect {
+                    self.cut_cable(cable);
+                }
+                for cable in cut {
+                    self.connect_cable(cable);
+                }
+            }
+        }
+    }
 }
 
 fn compute_score(n: i64, k: i64, c: Vec<Vec<i64>>, res: Answer) -> i64 {
@@ -863,8 +913,6 @@ fn compute_score(n: i64, k: i64, c: Vec<Vec<i64>>, res: Answer) -> i64 {
 }
 
 fn main() {
-    get_time();
-
     // 入力
     let mut s: String = String::new();
     std::io::stdin().read_line(&mut s).ok();
@@ -890,9 +938,9 @@ fn main() {
     }
 
     // pc 結合の焼きなまし
+    get_time();
     let mut anneal = Anneal::new(&c, n, k);
-    anneal.greedy_connection();
-    anneal.connect_cables_randomly(k * 100 - anneal.connected_cables.len());
+    anneal.anneal_connection();
 
     let moves: Vec<[usize; 4]> = Vec::new();
     let mut connects: Vec<[usize; 4]> = Vec::new();
