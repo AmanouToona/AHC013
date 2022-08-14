@@ -511,11 +511,11 @@ impl Anneal {
             cable_laying_position,
         };
 
-        anneal.get_all_cables();
+        anneal.cables = anneal.get_all_cables();
         anneal
     }
 
-    fn get_all_cables(&mut self) {
+    fn get_all_cables(&self) -> Vec<[usize; 4]> {
         let mut cables: Vec<[usize; 4]> = Vec::new();
 
         for h in 0..self.n {
@@ -544,7 +544,7 @@ impl Anneal {
                 }
             }
         }
-        self.cables = cables;
+        cables
     }
 
     fn calc_score(&self) -> usize {
@@ -716,24 +716,20 @@ impl Anneal {
 
         cables.shuffle(&mut rng);
 
-        let mut connection_cnt: usize = 0;
         let mut connected_cable: Vec<[usize; 4]> = Vec::new();
         for cable in cables {
+            if connected_cable.len() >= connection_num {
+                break;
+            }
+
             if self.connected_cables.contains(&cable) {
                 continue;
             }
             if self.can_connect_cable(cable) {
                 self.connect_cable(cable);
-                connection_cnt += 1;
             }
-
             connected_cable.push(cable.clone());
-
-            if connection_cnt >= connection_num {
-                break;
-            }
         }
-
         connected_cable
     }
 
@@ -765,6 +761,117 @@ impl Anneal {
         cut_cable
     }
 
+    fn move_pc(&mut self, operation: [usize; 4]) {
+        let [uh, uw, vh, vw] = operation;
+
+        if self.c[uh][uw] == 0 {
+            return;
+        }
+
+        if self.c[vh][vw] != 0 {
+            return;
+        }
+
+        self.c[vh][vw] = self.c[uh][uw];
+        self.c[uh][uw] = 0;
+    }
+
+    fn get_movable_position(&self, pc: [usize; 2]) -> Vec<[usize; 2]> {
+        let directions = vec![(0, 1), (-1, 0), (0, -1), (1, 0)];
+
+        let mut res = Vec::new();
+        let [uh, uw] = pc;
+        for (dh, dw) in directions {
+            let vh = uh as i32 + dh;
+            let vw = uw as i32 + dw;
+
+            if vh < 0 || vh >= self.n as i32 {
+                continue;
+            }
+            if vw < 0 || vw >= self.n as i32 {
+                continue;
+            }
+
+            let vh = vh as usize;
+            let vw = vw as usize;
+
+            if self.c[vh][vw] == 0 {
+                res.push([vh, vw]);
+            }
+        }
+        res
+    }
+
+    fn greedy_move(&mut self, move_num: usize) -> Vec<[usize; 4]> {
+        let mut rng = rand::thread_rng();
+
+        let directions = vec![(0, 1), (-1, 0), (0, -1), (1, 0)];
+
+        let mut cnt = 0;
+        let mut move_list: Vec<[usize; 4]> = Vec::new();
+
+        loop {
+            cnt += 1;
+
+            if cnt % 50 == 0 {
+                let t = get_time();
+                if t > 0.4 {
+                    return move_list;
+                }
+            }
+
+            let mut movables: Vec<[usize; 2]> = Vec::new();
+            for h in 0..self.n {
+                for w in 0..self.n {
+                    if self.c[h][w] == 0 {
+                        continue;
+                    }
+                    let movable_pos = self.get_movable_position([h, w]);
+
+                    if movable_pos.len() > 0 {
+                        movables.push([h, w]);
+                    }
+                }
+            }
+            movables.shuffle(&mut rng);
+
+            for pc in movables {
+                if self.c[pc[0]][pc[1]] == 0 {
+                    continue;
+                }
+
+                let move_to = self.get_movable_position(pc);
+
+                if move_to.len() == 0 {
+                    continue;
+                }
+
+                for [vh, vw] in move_to {
+                    if move_list.len() > move_num {
+                        return move_list;
+                    }
+                    self.move_pc([pc[0], pc[1], vh, vw]);
+
+                    let cables = self.get_all_cables();
+
+                    if cables.len() <= self.cables.len() {
+                        self.move_pc([vh, vw, pc[0], pc[1]]);
+                    } else {
+                        self.cables = cables;
+                        move_list.push([pc[0], pc[1], vh, vw]);
+                        cnt += 1;
+                        break;
+                    }
+                }
+            }
+            if move_list.len() > move_num {
+                return move_list;
+            }
+        }
+    }
+
+    fn anneal_move(&mut self) {}
+
     fn greedy_connection(&mut self) {
         self.connect_cables_randomly(self.k * 100);
         let time_limit: f64 = 2.5;
@@ -795,10 +902,10 @@ impl Anneal {
         }
     }
 
-    fn anneal_connection(&mut self) {
-        self.connect_cables_randomly(self.k * 100);
+    fn anneal_connection(&mut self, time_limit: f64, connection_num: usize) {
+        self.connect_cables_randomly(connection_num);
         let mut rng = rand_pcg::Pcg64Mcg::new(890482);
-        let TL: f64 = 2.5;
+        let TL: f64 = time_limit;
         let T0: f64 = self.calc_score() as f64;
         let T1: f64 = 2.0;
         let mut T = T0;
@@ -810,12 +917,12 @@ impl Anneal {
         let mut cnt = 0;
         loop {
             cnt += 1;
-            if cnt % 10 == 0 {
+            if cnt % 50 == 0 {
                 let mut t = get_time();
                 t /= TL;
                 if t >= 1.0 {
-                    self.connect_cables_randomly(self.k * 100 - self.connected_cables.len());
-                    break;
+                    self.connect_cables_randomly(connection_num - self.connected_cables.len());
+                    return;
                 }
                 T = T0.powf(1.0 - t) * T1.powf(t);
             }
@@ -823,7 +930,8 @@ impl Anneal {
             let u_score = self.calc_score();
 
             let cut = self.cut_cables_randomly(cut_connect_num);
-            let connect = self.connect_cables_randomly(cut_connect_num);
+            let connect =
+                self.connect_cables_randomly(connection_num - self.connected_cables.len());
 
             let v_score = self.calc_score();
 
@@ -940,9 +1048,10 @@ fn main() {
     // pc 結合の焼きなまし
     get_time();
     let mut anneal = Anneal::new(&c, n, k);
-    anneal.anneal_connection();
+    let moves = anneal.greedy_move(k * 30);
 
-    let moves: Vec<[usize; 4]> = Vec::new();
+    anneal.anneal_connection(2.5, k * 100 - moves.len());
+
     let mut connects: Vec<[usize; 4]> = Vec::new();
 
     for &cable in anneal.connected_cables.iter() {
@@ -951,4 +1060,5 @@ fn main() {
 
     let ans = Answer::new(&moves, &connects);
     ans.print_answer();
+    // println!("{}", anneal.calc_score());
 }
